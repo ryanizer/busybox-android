@@ -25,6 +25,7 @@ LOCAL_DIR=`dirname $0`
 SCRIPT='android-remote-install.sh'
 TMP='/sdcard'
 TGT='/system/bin'
+TMPIFS="$IFS"
 
 function execMount()
 {
@@ -33,8 +34,29 @@ function execMount()
     "mount -o remount,rw /system"
 }
 
+function rootExec()
+{
+    echo -e "su\n\n$@\nexit\n\nexit\n\n" | adb shell
+}
+
+function usage()
+{
+    echo "$0 [install | uninstall]"
+    echo "This script should be called with exactly one parameter, exiting"
+}
+
 function doMain()
 {
+    if [ $# -ne 1 ] ; then
+        echo ne1
+        usage
+        return 1
+    elif ! [ $1 == "install" ] || [ $1 == "uninstall" ] ; then
+        usage
+        return 1
+    fi
+
+
     # move the files over to an adb writable location
     adb push $LOCAL_DIR/busybox-android $TMP/
     adb push $LOCAL_DIR/$SCRIPT $TMP/
@@ -43,31 +65,33 @@ function doMain()
     # so-called here document
     # redirect chatter to /dev/null -- adb apparently puts stdin and stderr in
     # stdin so to add error checking we'd need to scan all the text
-adb shell <<DONE
-su
-# this is a remount form that works on "partially rooted devices"
-mount -o remount,rw /system
-cat $TMP/busybox-android > $TGT/busybox
-chmod 755 $TGT/busybox
-cat $TMP/$SCRIPT > $TGT/$SCRIPT
-rm $TMP/$SCRIPT
-cd $TGT                                 
-chmod 755 $SCRIPT
-busybox ash $TGT/$SCRIPT
-rm $TGT/$SCRIPT
-
-# cleanup
-rm $TMP/busybox-android
-
-mount -o remount,r /system
-exit
-exit
-
+adb shell <<-DONE
+	su
+	# this is a remount form that works on "partially rooted devices"
+	mount -o remount,rw /system
+	cat $TMP/busybox-android > $TGT/busybox
+	rm $TMP/busybox-android
+	chmod 755 $TGT/busybox
+	cat $TMP/$SCRIPT > $TGT/$SCRIPT
+	rm $TMP/$SCRIPT
+	cd $TGT
+	chmod 755 $SCRIPT
+	exit
+	exit
 DONE
 
+    # cleanup tmp file
+    CLEANUP="rm $TGT/$SCRIPT"
+
+    IFS=
+    if [ $1 == "install" ] ; then
+        rootExec "busybox ash $TGT/$SCRIPT 1\n$CLEANUP"
+    elif [ $1 == "uninstall" ] || [ $1 == "remove" ] ; then
+        CLEANUP="${CLEANUP}\nrm $TGT/busybox"
+        rootExec "busybox ash $TGT/$SCRIPT 0\n$CLEANUP"
+    fi
+    IFS="$TMPIFS"
 }
 
-set -x
-doMain
-set +x
+doMain $1
 
